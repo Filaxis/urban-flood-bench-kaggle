@@ -1,0 +1,25 @@
+# Virtual environments
+.urbanfloodbench/
+venv/
+.venv/
+
+# Data
+full_dataset/
+kaggle_dataset/
+data_cache/
+
+# Outputs
+outputs/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+
+# Large files
+*.parquet
+*.csv
+*.pkl
+*.joblib
