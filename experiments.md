@@ -12,4 +12,5 @@
 - Public LB: 0.6091
 - Notes: increased number of lags from 2 to 4
 - Tag: v1-4-lags
+- Commit: 718b666
 - Branch: main
