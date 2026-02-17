@@ -65,11 +65,17 @@ def rollout_event_model1(
     if cfg.warmup_steps + H > T:
         raise ValueError(f"H too large: warmup={cfg.warmup_steps}, H={H}, T={T}")
 
-    # Initialize lag states from warmup (t=8 and t=9)
-    # We predict wl[t+1] given features at timestep t (wl_t, wl_tm1, rain_t).
+    # Initialize lag states from warmup (t=6, t=7, t=8 and t=9)
+    # We predict wl[t+1] given features at timestep t (wl_t, wl_tm1, wl_tm2, wl_tm3, rain_t, rain_tm1, rain_tm2 and rain_sum_3).
+    # 2D wl lags at warmup end
+    wl2_tm3 = wl2_all[cfg.warmup_steps - 4, :].astype(cfg.dtype)
+    wl2_tm2 = wl2_all[cfg.warmup_steps - 3, :].astype(cfg.dtype)
     wl2_tm1 = wl2_all[cfg.warmup_steps - 2, :].astype(cfg.dtype)
     wl2_t   = wl2_all[cfg.warmup_steps - 1, :].astype(cfg.dtype)
 
+    # 1D wl lags
+    wl1_tm3 = wl1_all[cfg.warmup_steps - 4, :].astype(cfg.dtype)
+    wl1_tm2 = wl1_all[cfg.warmup_steps - 3, :].astype(cfg.dtype)
     wl1_tm1 = wl1_all[cfg.warmup_steps - 2, :].astype(cfg.dtype)
     wl1_t   = wl1_all[cfg.warmup_steps - 1, :].astype(cfg.dtype)
 
@@ -89,6 +95,9 @@ def rollout_event_model1(
         t = cfg.warmup_steps - 1 + k  # starts at 9 for k=0
         # rain at timestep t for 2D nodes
         rain_t = rain2[t, :].astype(cfg.dtype, copy=False)
+        rain_tm1 = rain2[t - 1, :].astype(cfg.dtype, copy=False)
+        rain_tm2 = rain2[t - 2, :].astype(cfg.dtype, copy=False)
+        rain_sum_3 = rain_t + rain_tm1 + rain_tm2
 
         # --- 2D batch ---
         df2 = pd.DataFrame({
@@ -96,9 +105,16 @@ def rollout_event_model1(
             "node_type": np.full(n2, 2, dtype=np.int8),
             "node_id": np.arange(n2, dtype=np.int32),
             "t": np.full(n2, t, dtype=np.int32),
+
             "wl_t": wl2_t,
             "wl_tm1": wl2_tm1,
+            "wl_tm2": wl2_tm2,
+            "wl_tm3": wl2_tm3,
+
             "rain_t": rain_t,
+            "rain_tm1": rain_tm1,
+            "rain_tm2": rain_tm2,
+            "rain_sum_3": rain_sum_3,
         })
         df2 = df2.merge(s2, left_on="node_id", right_on="node_idx", how="left")
         df2.drop(columns=["node_idx"], inplace=True)
@@ -113,9 +129,16 @@ def rollout_event_model1(
             "node_type": np.full(n1, 1, dtype=np.int8),
             "node_id": np.arange(n1, dtype=np.int32),
             "t": np.full(n1, t, dtype=np.int32),
+
             "wl_t": wl1_t,
             "wl_tm1": wl1_tm1,
+            "wl_tm2": wl1_tm2,
+            "wl_tm3": wl1_tm3,
+
             "rain_t": np.zeros(n1, dtype=cfg.dtype),
+            "rain_tm1": np.zeros(n1, dtype=cfg.dtype),
+            "rain_tm2": np.zeros(n1, dtype=cfg.dtype),
+            "rain_sum_3": np.zeros(n1, dtype=cfg.dtype),
         })
         df1 = df1.merge(s1, left_on="node_id", right_on="node_idx", how="left")
         df1.drop(columns=["node_idx"], inplace=True)
@@ -125,8 +148,8 @@ def rollout_event_model1(
         pred1[k, :] = y1
 
         # shift lags
-        wl2_tm1, wl2_t = wl2_t, y2
-        wl1_tm1, wl1_t = wl1_t, y1
+        wl2_tm3, wl2_tm2, wl2_tm1, wl2_t = wl2_tm2, wl2_tm1, wl2_t, y2
+        wl1_tm3, wl1_tm2, wl1_tm1, wl1_t = wl1_tm2, wl1_tm1, wl1_t, y1
 
     # Convert to dict keyed by (node_type,node_id)
     out: Dict[Tuple[int, int], np.ndarray] = {}
@@ -181,10 +204,14 @@ def rollout_event_two_models(
     if cfg.warmup_steps + H > T:
         raise ValueError(f"H too large: warmup={cfg.warmup_steps}, H={H}, T={T}")
 
-    # Initialize lag states from warmup (t=warmup-2 and t=warmup-1)
+    # Initialize lag states from warmup (t=6, t=7, t=8 and t=9)
+    wl2_tm3 = wl2_all[cfg.warmup_steps - 4, :].astype(cfg.dtype)
+    wl2_tm2 = wl2_all[cfg.warmup_steps - 3, :].astype(cfg.dtype)
     wl2_tm1 = wl2_all[cfg.warmup_steps - 2, :].astype(cfg.dtype)
     wl2_t   = wl2_all[cfg.warmup_steps - 1, :].astype(cfg.dtype)
 
+    wl1_tm3 = wl1_all[cfg.warmup_steps - 4, :].astype(cfg.dtype)
+    wl1_tm2 = wl1_all[cfg.warmup_steps - 3, :].astype(cfg.dtype)
     wl1_tm1 = wl1_all[cfg.warmup_steps - 2, :].astype(cfg.dtype)
     wl1_t   = wl1_all[cfg.warmup_steps - 1, :].astype(cfg.dtype)
 
@@ -197,6 +224,9 @@ def rollout_event_two_models(
     for k in range(H):
         t = cfg.warmup_steps - 1 + k  # starts at warmup-1 (e.g. 9)
         rain_t = rain2[t, :].astype(cfg.dtype, copy=False)
+        rain_tm1 = rain2[t - 1, :].astype(cfg.dtype, copy=False)
+        rain_tm2 = rain2[t - 2, :].astype(cfg.dtype, copy=False)
+        rain_sum_3 = rain_t + rain_tm1 + rain_tm2
 
         # --- 2D batch ---
         df2 = pd.DataFrame({
@@ -204,9 +234,16 @@ def rollout_event_two_models(
             "node_type": np.full(n2, 2, dtype=np.int8),
             "node_id": np.arange(n2, dtype=np.int32),
             "t": np.full(n2, t, dtype=np.int32),
+
             "wl_t": wl2_t,
             "wl_tm1": wl2_tm1,
+            "wl_tm2": wl2_tm2,
+            "wl_tm3": wl2_tm3,
+
             "rain_t": rain_t,
+            "rain_tm1": rain_tm1,
+            "rain_tm2": rain_tm2,
+            "rain_sum_3": rain_sum_3,
         })
         df2 = df2.merge(s2, left_on="node_id", right_on="node_idx", how="left")
         df2.drop(columns=["node_idx"], inplace=True)
@@ -221,9 +258,16 @@ def rollout_event_two_models(
             "node_type": np.full(n1, 1, dtype=np.int8),
             "node_id": np.arange(n1, dtype=np.int32),
             "t": np.full(n1, t, dtype=np.int32),
+            
             "wl_t": wl1_t,
             "wl_tm1": wl1_tm1,
+            "wl_tm2": wl1_tm2,
+            "wl_tm3": wl1_tm3,
+            
             "rain_t": np.zeros(n1, dtype=cfg.dtype),
+            "rain_tm1": np.zeros(n1, dtype=cfg.dtype),
+            "rain_tm2": np.zeros(n1, dtype=cfg.dtype),
+            "rain_sum_3": np.zeros(n1, dtype=cfg.dtype),
         })
         df1 = df1.merge(s1, left_on="node_id", right_on="node_idx", how="left")
         df1.drop(columns=["node_idx"], inplace=True)
@@ -242,8 +286,8 @@ def rollout_event_two_models(
         pred1[k, :] = y1
 
         # shift lags
-        wl2_tm1, wl2_t = wl2_t, y2
-        wl1_tm1, wl1_t = wl1_t, y1
+        wl2_tm3, wl2_tm2, wl2_tm1, wl2_t = wl2_tm2, wl2_tm1, wl2_t, y2
+        wl1_tm3, wl1_tm2, wl1_tm1, wl1_t = wl1_tm2, wl1_tm1, wl1_t, y1
 
     out: Dict[Tuple[int, int], np.ndarray] = {}
     for nid in range(n1):

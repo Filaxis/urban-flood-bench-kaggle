@@ -10,7 +10,7 @@ import pandas as pd
 @dataclass(frozen=True)
 class SampleConfig:
     warmup_steps: int = 10
-    n_lags: int = 2              # fixed at 2 for now
+    n_lags: int = 4              # increased from 2 (baseline) to 4 lags
     min_t: int = 9               # set to 9 if you want test-like training
     dry_keep_prob: float = 0.15   # fraction of dry timesteps kept
     max_timesteps_per_event: Optional[int] = 120  # cap after wet/dry selection
@@ -122,19 +122,36 @@ def build_event_training_samples(
         return pd.DataFrame()
 
     # --- build 2D samples ---
-    # features at t: wl_t, wl_t-1, rain_t ; target: wl_t+1
+    # features at t: wl_t, wl_t-1, wl_t-2, wl_t-3, rain_t, rain_t-1, rain_t-2 ; target: wl_t+1
     X2 = {
         "model_id": np.full((t_sel.size * n2,), model_id, dtype=np.int16),
         "node_type": np.full((t_sel.size * n2,), 2, dtype=np.int8),
         "node_id": np.tile(np.arange(n2, dtype=np.int32), t_sel.size),
         "t": np.repeat(t_sel.astype(np.int32), n2),
 
+        # water level lags
         "wl_t": wl2[t_sel, :].reshape(-1),
         "wl_tm1": wl2[t_sel - 1, :].reshape(-1),
-        "rain_t": rain2[t_sel, :].reshape(-1),
+        "wl_tm2": wl2[t_sel - 2, :].reshape(-1),
+        "wl_tm3": wl2[t_sel - 3, :].reshape(-1),
 
-        "target": wl2[t_sel + 1, :].reshape(-1),
+        # rainfall lags
+        "rain_t": rain2[t_sel, :].reshape(-1),
+        "rain_tm1": rain2[t_sel - 1, :].reshape(-1),
+        "rain_tm2": rain2[t_sel - 2, :].reshape(-1),
     }
+    # engineered rainfall accumulation (3-step)
+    rain_sum_3 = (
+    rain2[t_sel, :] +
+    rain2[t_sel - 1, :] +
+    rain2[t_sel - 2, :]
+    ).reshape(-1)
+
+    X2["rain_sum_3"] = rain_sum_3.astype(cfg.dtype, copy=False)
+
+    # target: wl at t+1
+    X2["target"] = wl2[t_sel + 1, :].reshape(-1)
+
     df2 = pd.DataFrame(X2)
 
     # join 2D static (broadcast via node_id)
@@ -148,14 +165,25 @@ def build_event_training_samples(
         "node_id": np.tile(np.arange(n1, dtype=np.int32), t_sel.size),
         "t": np.repeat(t_sel.astype(np.int32), n1),
 
+        # water level lags
         "wl_t": wl1[t_sel, :].reshape(-1),
         "wl_tm1": wl1[t_sel - 1, :].reshape(-1),
+        "wl_tm2": wl1[t_sel - 2, :].reshape(-1),
+        "wl_tm3": wl1[t_sel - 3, :].reshape(-1),
 
-        # 1D has no rainfall; keep column for unified model
+        # 1D has no rainfall; keep columns for unified model
         "rain_t": np.zeros((t_sel.size * n1,), dtype=cfg.dtype),
+        "rain_tm1": np.zeros((t_sel.size * n1,), dtype=cfg.dtype),
+        "rain_tm2": np.zeros((t_sel.size * n1,), dtype=cfg.dtype),
 
         "target": wl1[t_sel + 1, :].reshape(-1),
     }
+    # engineered rainfall accumulation (3-step)
+    X1["rain_sum_3"] = np.zeros((t_sel.size * n1,), dtype=cfg.dtype)
+
+    # target: wl at t+1
+    X1["target"] = wl1[t_sel + 1, :].reshape(-1)
+
     df1 = pd.DataFrame(X1)
 
     df1 = df1.merge(nodes_1d_static, left_on="node_id", right_on="node_idx", how="left")
