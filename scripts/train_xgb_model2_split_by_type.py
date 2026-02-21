@@ -26,25 +26,44 @@ def train_one(df_train: pd.DataFrame, df_val: pd.DataFrame, out_dir: Path, tag: 
     pd.Series(feature_cols).to_csv(out_dir / f"feature_cols_{tag}.csv", index=False, header=False)
 
     model = XGBRegressor(
-        n_estimators=5000,
-        max_depth=8,
-        learning_rate=0.05,
+        n_estimators=4000,
+        max_depth=10,
+        learning_rate=0.03,
+        min_child_weight = 5,
+        reg_lambda = 1,
+        reg_alpha = 0,
         subsample=0.8,
         colsample_bytree=0.8,
         tree_method="hist",
         random_state=42,
         n_jobs=-1,
-        early_stopping_rounds=50,
+        early_stopping_rounds=40,
     )
 
-    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
-    preds = model.predict(X_val)
-    rmse = root_mean_squared_error(y_val, preds)
-    print(f"[{tag}] Validation RMSE: {rmse:.6f}")
-
+    # model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
     model_path = out_dir / f"model2_xgb_{tag}.json"
-    model.save_model(str(model_path))
-    print(f"[{tag}] Saved: {model_path}")
+    interrupted = False
+    try:
+        model.fit(
+            X_train, y_train,
+            eval_set=[(X_val, y_val)],
+            verbose=50,
+        )
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\n[Interrupted] Saving partially trained model...")
+    finally:
+        # save whatever state we have
+        model.save_model(str(model_path))
+        print(f"[{tag}] Saved: {model_path}")
+
+    if not interrupted:
+        preds = model.predict(X_val)
+        rmse = root_mean_squared_error(y_val, preds)
+        print(f"[{tag}] Validation RMSE: {rmse:.6f}")
+    else:
+        print(f"[{tag}] Skipped RMSE because training was interrupted.")
+
 
 
 def main():

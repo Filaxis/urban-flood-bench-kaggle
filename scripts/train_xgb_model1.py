@@ -50,31 +50,41 @@ def main():
     print("Val shape:", X_val.shape)
 
     model = XGBRegressor(
-        n_estimators=500,
-        max_depth=8,
-        learning_rate=0.05,
+        n_estimators=4000,
+        max_depth=10,
+        learning_rate=0.03,
+        min_child_weight = 5,
+        reg_lambda = 1,
+        reg_alpha = 0,
         subsample=0.8,
         colsample_bytree=0.8,
         tree_method="hist",  # important for speed
         random_state=42,
         n_jobs=-1,
-        early_stopping_rounds=50,
+        early_stopping_rounds=40,
     )
+    model_path = parquet_dir / "model1_xgb.json"
+    interrupted = False
+    try:
+        model.fit(
+            X_train, y_train,
+            eval_set=[(X_val, y_val)],
+            verbose=50,
+        )
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\n[Interrupted] Saving partially trained model...")
+    finally:
+        # save whatever state we have
+        model.save_model(str(model_path))
+        print(f"Model saved: {model_path}")
 
-    model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_val, y_val)],
-        verbose=50,
-    )
-
-    preds = model.predict(X_val)
-    rmse = root_mean_squared_error(y_val, preds)
-
-    print(f"\nValidation RMSE: {rmse:.6f}")
-
-    model.save_model(str(parquet_dir / "model1_xgb.json"))
-    print("Model saved.")
+    if not interrupted:
+        preds = model.predict(X_val)
+        rmse = root_mean_squared_error(y_val, preds)
+        print(f"Model validation RMSE: {rmse:.6f}")
+    else:
+        print(f"Skipped RMSE because training was interrupted.")
 
 
 if __name__ == "__main__":

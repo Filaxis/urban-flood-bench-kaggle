@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
@@ -65,15 +64,19 @@ def rollout_event_model1(
     if cfg.warmup_steps + H > T:
         raise ValueError(f"H too large: warmup={cfg.warmup_steps}, H={H}, T={T}")
 
-    # Initialize lag states from warmup (t=6, t=7, t=8 and t=9)
-    # We predict wl[t+1] given features at timestep t (wl_t, wl_tm1, wl_tm2, wl_tm3, rain_t, rain_tm1, rain_tm2 and rain_sum_3).
+    # Initialize lag states from warmup (t=4, t=5, t=6, t=7, t=8 and t=9)
+    # We predict wl[t+1] given features at timestep t (wl_t, wl_tm1, wl_tm2, wl_tm3, wl_tm4, wl_tm5, rain_t, rain_tm1, rain_tm2, rain_tm3 and rain_sum_4).
     # 2D wl lags at warmup end
+    wl2_tm5 = wl2_all[cfg.warmup_steps - 6, :].astype(cfg.dtype)
+    wl2_tm4 = wl2_all[cfg.warmup_steps - 5, :].astype(cfg.dtype)
     wl2_tm3 = wl2_all[cfg.warmup_steps - 4, :].astype(cfg.dtype)
     wl2_tm2 = wl2_all[cfg.warmup_steps - 3, :].astype(cfg.dtype)
     wl2_tm1 = wl2_all[cfg.warmup_steps - 2, :].astype(cfg.dtype)
     wl2_t   = wl2_all[cfg.warmup_steps - 1, :].astype(cfg.dtype)
 
     # 1D wl lags
+    wl1_tm5 = wl1_all[cfg.warmup_steps - 6, :].astype(cfg.dtype)
+    wl1_tm4 = wl1_all[cfg.warmup_steps - 5, :].astype(cfg.dtype)
     wl1_tm3 = wl1_all[cfg.warmup_steps - 4, :].astype(cfg.dtype)
     wl1_tm2 = wl1_all[cfg.warmup_steps - 3, :].astype(cfg.dtype)
     wl1_tm1 = wl1_all[cfg.warmup_steps - 2, :].astype(cfg.dtype)
@@ -97,7 +100,10 @@ def rollout_event_model1(
         rain_t = rain2[t, :].astype(cfg.dtype, copy=False)
         rain_tm1 = rain2[t - 1, :].astype(cfg.dtype, copy=False)
         rain_tm2 = rain2[t - 2, :].astype(cfg.dtype, copy=False)
-        rain_sum_3 = rain_t + rain_tm1 + rain_tm2
+        rain_tm3 = rain2[t - 3, :]
+        rain_sum_4 = rain_t + rain_tm1 + rain_tm2 + rain_tm3
+        d_wl2_t = wl2_t - wl2_tm1
+        d_wl1_t = wl1_t - wl1_tm1
 
         # --- 2D batch ---
         df2 = pd.DataFrame({
@@ -110,11 +116,15 @@ def rollout_event_model1(
             "wl_tm1": wl2_tm1,
             "wl_tm2": wl2_tm2,
             "wl_tm3": wl2_tm3,
+            "wl_tm4": wl2_tm4,
+            "wl_tm5": wl2_tm5,
 
             "rain_t": rain_t,
             "rain_tm1": rain_tm1,
             "rain_tm2": rain_tm2,
-            "rain_sum_3": rain_sum_3,
+            "rain_tm3": rain_tm3,
+            "rain_sum_4": rain_sum_4,
+            "d_wl_t": d_wl2_t,
         })
         df2 = df2.merge(s2, left_on="node_id", right_on="node_idx", how="left")
         df2.drop(columns=["node_idx"], inplace=True)
@@ -134,11 +144,15 @@ def rollout_event_model1(
             "wl_tm1": wl1_tm1,
             "wl_tm2": wl1_tm2,
             "wl_tm3": wl1_tm3,
+            "wl_tm4": wl1_tm4,
+            "wl_tm5": wl1_tm5,
 
             "rain_t": np.zeros(n1, dtype=cfg.dtype),
             "rain_tm1": np.zeros(n1, dtype=cfg.dtype),
             "rain_tm2": np.zeros(n1, dtype=cfg.dtype),
-            "rain_sum_3": np.zeros(n1, dtype=cfg.dtype),
+            "rain_tm3": np.zeros(n1, dtype=cfg.dtype),
+            "rain_sum_4": np.zeros(n1, dtype=cfg.dtype),
+            "d_wl_t": d_wl1_t,
         })
         df1 = df1.merge(s1, left_on="node_id", right_on="node_idx", how="left")
         df1.drop(columns=["node_idx"], inplace=True)
@@ -148,8 +162,8 @@ def rollout_event_model1(
         pred1[k, :] = y1
 
         # shift lags
-        wl2_tm3, wl2_tm2, wl2_tm1, wl2_t = wl2_tm2, wl2_tm1, wl2_t, y2
-        wl1_tm3, wl1_tm2, wl1_tm1, wl1_t = wl1_tm2, wl1_tm1, wl1_t, y1
+        wl2_tm5, wl2_tm4, wl2_tm3, wl2_tm2, wl2_tm1, wl2_t = wl2_tm4, wl2_tm3, wl2_tm2, wl2_tm1, wl2_t, y2
+        wl1_tm5, wl1_tm4, wl1_tm3, wl1_tm2, wl1_tm1, wl1_t = wl1_tm4, wl1_tm3, wl1_tm2, wl1_tm1, wl1_t, y1
 
     # Convert to dict keyed by (node_type,node_id)
     out: Dict[Tuple[int, int], np.ndarray] = {}
@@ -205,11 +219,15 @@ def rollout_event_two_models(
         raise ValueError(f"H too large: warmup={cfg.warmup_steps}, H={H}, T={T}")
 
     # Initialize lag states from warmup (t=6, t=7, t=8 and t=9)
+    wl2_tm5 = wl2_all[cfg.warmup_steps - 6, :].astype(cfg.dtype)
+    wl2_tm4 = wl2_all[cfg.warmup_steps - 5, :].astype(cfg.dtype)
     wl2_tm3 = wl2_all[cfg.warmup_steps - 4, :].astype(cfg.dtype)
     wl2_tm2 = wl2_all[cfg.warmup_steps - 3, :].astype(cfg.dtype)
     wl2_tm1 = wl2_all[cfg.warmup_steps - 2, :].astype(cfg.dtype)
     wl2_t   = wl2_all[cfg.warmup_steps - 1, :].astype(cfg.dtype)
 
+    wl1_tm5 = wl1_all[cfg.warmup_steps - 6, :].astype(cfg.dtype)
+    wl1_tm4 = wl1_all[cfg.warmup_steps - 5, :].astype(cfg.dtype)
     wl1_tm3 = wl1_all[cfg.warmup_steps - 4, :].astype(cfg.dtype)
     wl1_tm2 = wl1_all[cfg.warmup_steps - 3, :].astype(cfg.dtype)
     wl1_tm1 = wl1_all[cfg.warmup_steps - 2, :].astype(cfg.dtype)
@@ -226,7 +244,10 @@ def rollout_event_two_models(
         rain_t = rain2[t, :].astype(cfg.dtype, copy=False)
         rain_tm1 = rain2[t - 1, :].astype(cfg.dtype, copy=False)
         rain_tm2 = rain2[t - 2, :].astype(cfg.dtype, copy=False)
-        rain_sum_3 = rain_t + rain_tm1 + rain_tm2
+        rain_tm3 = rain2[t - 3, :]
+        rain_sum_4 = rain_t + rain_tm1 + rain_tm2 + rain_tm3
+        d_wl2_t = wl2_t - wl2_tm1
+        d_wl1_t = wl1_t - wl1_tm1
 
         # --- 2D batch ---
         df2 = pd.DataFrame({
@@ -239,11 +260,15 @@ def rollout_event_two_models(
             "wl_tm1": wl2_tm1,
             "wl_tm2": wl2_tm2,
             "wl_tm3": wl2_tm3,
+            "wl_tm4": wl2_tm4,
+            "wl_tm5": wl2_tm5,
 
             "rain_t": rain_t,
             "rain_tm1": rain_tm1,
             "rain_tm2": rain_tm2,
-            "rain_sum_3": rain_sum_3,
+            "rain_tm3": rain_tm3,
+            "rain_sum_4": rain_sum_4,
+            "d_wl_t": d_wl2_t,
         })
         df2 = df2.merge(s2, left_on="node_id", right_on="node_idx", how="left")
         df2.drop(columns=["node_idx"], inplace=True)
@@ -263,11 +288,15 @@ def rollout_event_two_models(
             "wl_tm1": wl1_tm1,
             "wl_tm2": wl1_tm2,
             "wl_tm3": wl1_tm3,
+            "wl_tm4": wl1_tm4,
+            "wl_tm5": wl1_tm5,
             
             "rain_t": np.zeros(n1, dtype=cfg.dtype),
             "rain_tm1": np.zeros(n1, dtype=cfg.dtype),
             "rain_tm2": np.zeros(n1, dtype=cfg.dtype),
-            "rain_sum_3": np.zeros(n1, dtype=cfg.dtype),
+            "rain_tm3": np.zeros(n1, dtype=cfg.dtype),
+            "rain_sum_4": np.zeros(n1, dtype=cfg.dtype),
+            "d_wl_t": d_wl1_t,
         })
         df1 = df1.merge(s1, left_on="node_id", right_on="node_idx", how="left")
         df1.drop(columns=["node_idx"], inplace=True)
@@ -286,8 +315,8 @@ def rollout_event_two_models(
         pred1[k, :] = y1
 
         # shift lags
-        wl2_tm3, wl2_tm2, wl2_tm1, wl2_t = wl2_tm2, wl2_tm1, wl2_t, y2
-        wl1_tm3, wl1_tm2, wl1_tm1, wl1_t = wl1_tm2, wl1_tm1, wl1_t, y1
+        wl2_tm5, wl2_tm4, wl2_tm3, wl2_tm2, wl2_tm1, wl2_t = wl2_tm4, wl2_tm3, wl2_tm2, wl2_tm1, wl2_t, y2
+        wl1_tm5, wl1_tm4, wl1_tm3, wl1_tm2, wl1_tm1, wl1_t = wl1_tm4, wl1_tm3, wl1_tm2, wl1_tm1, wl1_t, y1
 
     out: Dict[Tuple[int, int], np.ndarray] = {}
     for nid in range(n1):

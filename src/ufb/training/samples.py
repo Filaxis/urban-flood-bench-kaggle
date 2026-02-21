@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,7 @@ import pandas as pd
 @dataclass(frozen=True)
 class SampleConfig:
     warmup_steps: int = 10
-    n_lags: int = 4              # increased from 2 (baseline) to 4 lags
+    n_lags: int = 6              # increased from 2 (baseline) to 4 lags
     min_t: int = 9               # set to 9 if you want test-like training
     dry_keep_prob: float = 0.15   # fraction of dry timesteps kept
     max_timesteps_per_event: Optional[int] = 120  # cap after wet/dry selection
@@ -58,8 +58,8 @@ def _select_timesteps_for_training(rain_2d: np.ndarray, cfg: SampleConfig) -> np
     rng = np.random.default_rng(cfg.seed)
     T = rain_2d.shape[0]
 
-    # valid t range for 2 lags and t+1 target
-    t_min = max(cfg.min_t, cfg.n_lags - 1)  # n_lags=2 => need t>=1
+    # valid t range for 6 lags and t+1 target
+    t_min = max(cfg.min_t, cfg.n_lags - 1)  # n_lags=6 => now max(9, 5) = 9
     t_max = T - 2
     if t_max < t_min:
         return np.array([], dtype=int)
@@ -94,8 +94,8 @@ def build_event_training_samples(
     """
     Returns one training DataFrame for ONE event, containing both 1D and 2D rows.
     """
-    if cfg.n_lags != 2:
-        raise ValueError("This baseline constructor assumes n_lags=2.")
+    # if cfg.n_lags != 2:
+    #     raise ValueError("This baseline constructor assumes n_lags=2.")
 
     # --- static ---
     n1 = len(nodes_1d_static)
@@ -134,20 +134,29 @@ def build_event_training_samples(
         "wl_tm1": wl2[t_sel - 1, :].reshape(-1),
         "wl_tm2": wl2[t_sel - 2, :].reshape(-1),
         "wl_tm3": wl2[t_sel - 3, :].reshape(-1),
+        "wl_tm4": wl2[t_sel - 4, :].reshape(-1),
+        "wl_tm5": wl2[t_sel - 5, :].reshape(-1),
 
         # rainfall lags
         "rain_t": rain2[t_sel, :].reshape(-1),
         "rain_tm1": rain2[t_sel - 1, :].reshape(-1),
         "rain_tm2": rain2[t_sel - 2, :].reshape(-1),
+        "rain_tm3": rain2[t_sel - 3, :].reshape(-1),
     }
-    # engineered rainfall accumulation (3-step)
-    rain_sum_3 = (
-    rain2[t_sel, :] +
-    rain2[t_sel - 1, :] +
-    rain2[t_sel - 2, :]
+    # engineered rainfall accumulation (4-step)
+    rain_sum_4 = (
+        rain2[t_sel, :] +
+        rain2[t_sel - 1, :] +
+        rain2[t_sel - 2, :] +
+        rain2[t_sel - 3, :]
     ).reshape(-1)
+    X2["rain_sum_4"] = rain_sum_4.astype(cfg.dtype, copy=False)
 
-    X2["rain_sum_3"] = rain_sum_3.astype(cfg.dtype, copy=False)
+    # delta feature (very high ROI)
+    X2["d_wl_t"] = (
+        wl2[t_sel, :] -
+        wl2[t_sel - 1, :]
+    ).reshape(-1)
 
     # target: wl at t+1
     X2["target"] = wl2[t_sel + 1, :].reshape(-1)
@@ -170,16 +179,22 @@ def build_event_training_samples(
         "wl_tm1": wl1[t_sel - 1, :].reshape(-1),
         "wl_tm2": wl1[t_sel - 2, :].reshape(-1),
         "wl_tm3": wl1[t_sel - 3, :].reshape(-1),
+        "wl_tm4": wl1[t_sel - 4, :].reshape(-1),
+        "wl_tm5": wl1[t_sel - 5, :].reshape(-1),
 
         # 1D has no rainfall; keep columns for unified model
         "rain_t": np.zeros((t_sel.size * n1,), dtype=cfg.dtype),
         "rain_tm1": np.zeros((t_sel.size * n1,), dtype=cfg.dtype),
         "rain_tm2": np.zeros((t_sel.size * n1,), dtype=cfg.dtype),
+        "rain_tm3": np.zeros((t_sel.size * n1,), dtype=cfg.dtype),
+        "rain_sum_4": np.zeros((t_sel.size * n1,), dtype=cfg.dtype),
 
-        "target": wl1[t_sel + 1, :].reshape(-1),
     }
-    # engineered rainfall accumulation (3-step)
-    X1["rain_sum_3"] = np.zeros((t_sel.size * n1,), dtype=cfg.dtype)
+    # delta feature (very high ROI)
+    X1["d_wl_t"] = (
+        wl1[t_sel, :] -
+        wl1[t_sel - 1, :]
+    ).reshape(-1)
 
     # target: wl at t+1
     X1["target"] = wl1[t_sel + 1, :].reshape(-1)
