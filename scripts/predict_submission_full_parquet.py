@@ -142,6 +142,9 @@ def main() -> None:
                         nodes_2d_dyn=dyn.nodes_2d_dyn,
                         H=H,
                         cfg=cfg,
+                        adj_1d=static1.adj_1d,
+                        adj_2d=static1.adj_2d,
+                        conn1d_to_2d=static1.conn1d_to_2d,
                     )
                     if eid in {5, 8}:  # pick any 1–2 event_ids you like
                         a1 = np.concatenate([current_cache[(1, i)] for i in range(len(static1.nodes_1d))])
@@ -168,6 +171,9 @@ def main() -> None:
                         nodes_2d_dyn=dyn.nodes_2d_dyn,
                         H=H,
                         cfg=cfg,
+                        adj_1d=static2.adj_1d,
+                        adj_2d=static2.adj_2d,
+                        conn1d_to_2d=static2.conn1d_to_2d,
                         alpha_1d=1.0,
                         clip_1d=None,
                     )

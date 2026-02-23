@@ -29,7 +29,7 @@ def main() -> None:
     # Model_2 has larger node counts; keep caps conservative at first.
     cfg = SampleConfig(
         warmup_steps=warmup_steps,
-        n_lags=2,
+        n_lags=6,
         min_t=9,
         dry_keep_prob=0.15,
         max_timesteps_per_event=140,  # slightly lower than Model_1 to control size
@@ -67,6 +67,9 @@ def main() -> None:
             nodes_1d_dyn=dyn.nodes_1d_dyn,
             nodes_2d_dyn=dyn.nodes_2d_dyn,
             cfg=cfg,
+            adj_1d=static.adj_1d,
+            adj_2d=static.adj_2d,
+            conn1d_to_2d=static.conn1d_to_2d,
         )
 
         if df.empty:

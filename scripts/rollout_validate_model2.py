@@ -59,6 +59,9 @@ def main():
             nodes_2d_dyn=dyn.nodes_2d_dyn,
             H=H,
             cfg=cfg,
+            adj_1d=static.adj_1d,
+            adj_2d=static.adj_2d,
+            conn1d_to_2d=static.conn1d_to_2d,
             alpha_1d=1.0,
             clip_1d=None,
         )

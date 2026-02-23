@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from ufb.features.graph_feats import UndirectedEdges, neighbor_mean
 
 @dataclass(frozen=True)
 class SampleConfig:
@@ -87,9 +88,12 @@ def build_event_training_samples(
     model_id: int,
     nodes_1d_static: pd.DataFrame,
     nodes_2d_static: pd.DataFrame,
-    nodes_1d_dyn: pd.DataFrame,  # cols: timestep,node_idx,water_level
-    nodes_2d_dyn: pd.DataFrame,  # cols: timestep,node_idx,rainfall,water_level
+    nodes_1d_dyn: pd.DataFrame,
+    nodes_2d_dyn: pd.DataFrame,
     cfg: SampleConfig,
+    adj_1d: Optional[UndirectedEdges] = None,
+    adj_2d: Optional[UndirectedEdges] = None,
+    conn1d_to_2d: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     """
     Returns one training DataFrame for ONE event, containing both 1D and 2D rows.
@@ -116,10 +120,46 @@ def build_event_training_samples(
     rain2 = v2[:, :, 0].astype(cfg.dtype, copy=False) # (T,n2)
     wl2 = v2[:, :, 1].astype(cfg.dtype, copy=False)   # (T,n2)
 
+    # Precompute rain_sum_4 per timestep for 2D (needed for neighbor + conn features)
+    T = wl2.shape[0]
+    rain_sum_4_all = np.zeros((T, n2), dtype=cfg.dtype)
+    rain_sum_4_all[3:, :] = (rain2[3:, :] + rain2[2:-1, :] + rain2[1:-2, :] + rain2[:-3, :]).astype(cfg.dtype, copy=False)
+
     # choose timesteps (based on 2D rainfall; works fine even if you include 1D)
     t_sel = _select_timesteps_for_training(rain2, cfg)
     if t_sel.size == 0:
         return pd.DataFrame()
+    
+    # --- graph features (computed only on selected timesteps for speed) ---
+    use_graph_2d = adj_2d is not None
+    use_graph_1d = adj_1d is not None
+    use_conn = conn1d_to_2d is not None
+
+    # 2D neighbor features for each selected t
+    if use_graph_2d:
+        nbr_wl2_t = np.stack([neighbor_mean(wl2[t, :], adj_2d) for t in t_sel], axis=0)          # (S, n2)
+        nbr_wl2_tm1 = np.stack([neighbor_mean(wl2[t-1, :], adj_2d) for t in t_sel], axis=0)      # (S, n2)
+        nbr_rsum4 = np.stack([neighbor_mean(rain_sum_4_all[t, :], adj_2d) for t in t_sel], axis=0)# (S, n2)
+
+    # 1D neighbor features for each selected t
+    if use_graph_1d:
+        nbr_wl1_t = np.stack([neighbor_mean(wl1[t, :], adj_1d) for t in t_sel], axis=0)          # (S, n1)
+        nbr_wl1_tm1 = np.stack([neighbor_mean(wl1[t-1, :], adj_1d) for t in t_sel], axis=0)      # (S, n1)
+
+    # 1D <- connected 2D features
+    if use_conn:
+        conn = conn1d_to_2d.astype(np.int32, copy=False)  # (n1,)
+        conn_safe = conn.copy()
+        missing = conn_safe < 0
+        if missing.any():
+            conn_safe[missing] = 0
+
+        conn2d_wl_t = wl2[t_sel[:, None], conn_safe[None, :]]                 # (S, n1)
+        conn2d_rsum4 = rain_sum_4_all[t_sel[:, None], conn_safe[None, :]]     # (S, n1)
+
+        if missing.any():
+            conn2d_wl_t[:, missing] = 0
+            conn2d_rsum4[:, missing] = 0
 
     # --- build 2D samples ---
     # features at t: wl_t, wl_t-1, wl_t-2, wl_t-3, rain_t, rain_t-1, rain_t-2 ; target: wl_t+1
@@ -158,6 +198,16 @@ def build_event_training_samples(
         wl2[t_sel - 1, :]
     ).reshape(-1)
 
+    # neighbor features (2D)
+    if use_graph_2d:
+        X2["nbr_wl_mean_t"] = nbr_wl2_t.reshape(-1).astype(cfg.dtype, copy=False)
+        X2["nbr_wl_mean_tm1"] = nbr_wl2_tm1.reshape(-1).astype(cfg.dtype, copy=False)
+        X2["nbr_rain_sum_4"] = nbr_rsum4.reshape(-1).astype(cfg.dtype, copy=False)
+    else:
+        X2["nbr_wl_mean_t"] = np.zeros((t_sel.size * n2,), dtype=cfg.dtype)
+        X2["nbr_wl_mean_tm1"] = np.zeros((t_sel.size * n2,), dtype=cfg.dtype)
+        X2["nbr_rain_sum_4"] = np.zeros((t_sel.size * n2,), dtype=cfg.dtype)
+
     # target: wl at t+1
     X2["target"] = wl2[t_sel + 1, :].reshape(-1)
 
@@ -195,6 +245,22 @@ def build_event_training_samples(
         wl1[t_sel, :] -
         wl1[t_sel - 1, :]
     ).reshape(-1)
+
+    # neighbor features (1D)
+    if use_graph_1d:
+        X1["nbr_wl_mean_t"] = nbr_wl1_t.reshape(-1).astype(cfg.dtype, copy=False)
+        X1["nbr_wl_mean_tm1"] = nbr_wl1_tm1.reshape(-1).astype(cfg.dtype, copy=False)
+    else:
+        X1["nbr_wl_mean_t"] = np.zeros((t_sel.size * n1,), dtype=cfg.dtype)
+        X1["nbr_wl_mean_tm1"] = np.zeros((t_sel.size * n1,), dtype=cfg.dtype)
+
+    # connected 2D features (1D <- 2D)
+    if use_conn:
+        X1["conn2d_wl_t"] = conn2d_wl_t.reshape(-1).astype(cfg.dtype, copy=False)
+        X1["conn2d_rain_sum_4"] = conn2d_rsum4.reshape(-1).astype(cfg.dtype, copy=False)
+    else:
+        X1["conn2d_wl_t"] = np.zeros((t_sel.size * n1,), dtype=cfg.dtype)
+        X1["conn2d_rain_sum_4"] = np.zeros((t_sel.size * n1,), dtype=cfg.dtype)
 
     # target: wl at t+1
     X1["target"] = wl1[t_sel + 1, :].reshape(-1)

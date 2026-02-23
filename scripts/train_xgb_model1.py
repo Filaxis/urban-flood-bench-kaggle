@@ -46,6 +46,14 @@ def main():
     X_val = df_val.drop(columns=drop_cols)
     y_val = df_val["target"]
 
+    # Save feature columns
+    feature_cols = list(X_train.columns)
+    pd.Series(feature_cols).to_csv(
+        parquet_dir / "feature_cols.csv",
+        index=False,
+        header=False
+)
+
     print("Train shape:", X_train.shape)
     print("Val shape:", X_val.shape)
 

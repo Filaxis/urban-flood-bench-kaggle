@@ -29,7 +29,7 @@ def main() -> None:
     # Given your T distribution (94/97/205/445), this is a good baseline:
     cfg = SampleConfig(
         warmup_steps=warmup_steps,
-        n_lags=2,
+        n_lags=6,
         min_t=9,                 # mimic test regime (warmup 0..9)
         dry_keep_prob=0.15,      # keep 15% of dry steps
         max_timesteps_per_event=180,  # caps 445-step events so they don't dominate
@@ -75,6 +75,9 @@ def main() -> None:
             nodes_1d_dyn=dyn.nodes_1d_dyn,
             nodes_2d_dyn=dyn.nodes_2d_dyn,
             cfg=cfg,
+            adj_1d=static.adj_1d,
+            adj_2d=static.adj_2d,
+            conn1d_to_2d=static.conn1d_to_2d,
         )
 
         if df.empty:

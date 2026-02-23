@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
+from ufb.features.graph_feats import UndirectedEdges, neighbor_mean
 
 @dataclass(frozen=True)
 class RolloutConfig:
@@ -39,6 +40,9 @@ def rollout_event_model1(
     nodes_2d_dyn: pd.DataFrame,  # timestep,node_idx,rainfall,water_level (wl exists for 0..9; rainfall all)
     H: int,
     cfg: RolloutConfig,
+    adj_1d: UndirectedEdges,
+    adj_2d: UndirectedEdges,
+    conn1d_to_2d: np.ndarray,
 ) -> Dict[Tuple[int, int], np.ndarray]:
     """
     Returns dict:
@@ -105,6 +109,26 @@ def rollout_event_model1(
         d_wl2_t = wl2_t - wl2_tm1
         d_wl1_t = wl1_t - wl1_tm1
 
+        # graph features
+        nbr_wl2_t = neighbor_mean(wl2_t.astype(np.float32, copy=False), adj_2d).astype(cfg.dtype, copy=False)
+        nbr_wl2_tm1 = neighbor_mean(wl2_tm1.astype(np.float32, copy=False), adj_2d).astype(cfg.dtype, copy=False)
+        nbr_rsum4 = neighbor_mean(rain_sum_4.astype(np.float32, copy=False), adj_2d).astype(cfg.dtype, copy=False)
+
+        nbr_wl1_t = neighbor_mean(wl1_t.astype(np.float32, copy=False), adj_1d).astype(cfg.dtype, copy=False)
+        nbr_wl1_tm1 = neighbor_mean(wl1_tm1.astype(np.float32, copy=False), adj_1d).astype(cfg.dtype, copy=False)
+
+        conn = conn1d_to_2d.astype(np.int32, copy=False)
+        conn_safe = conn.copy()
+        missing = conn_safe < 0
+        if missing.any():
+            conn_safe[missing] = 0
+
+        conn2d_wl_t = wl2_t[conn_safe].astype(cfg.dtype, copy=False)
+        conn2d_rsum4 = rain_sum_4[conn_safe].astype(cfg.dtype, copy=False)
+        if missing.any():
+            conn2d_wl_t[missing] = 0
+            conn2d_rsum4[missing] = 0
+
         # --- 2D batch ---
         df2 = pd.DataFrame({
             "model_id": np.full(n2, model_id, dtype=np.int16),
@@ -125,6 +149,10 @@ def rollout_event_model1(
             "rain_tm3": rain_tm3,
             "rain_sum_4": rain_sum_4,
             "d_wl_t": d_wl2_t,
+
+            "nbr_wl_mean_t": nbr_wl2_t,
+            "nbr_wl_mean_tm1": nbr_wl2_tm1,
+            "nbr_rain_sum_4": nbr_rsum4,
         })
         df2 = df2.merge(s2, left_on="node_id", right_on="node_idx", how="left")
         df2.drop(columns=["node_idx"], inplace=True)
@@ -153,6 +181,11 @@ def rollout_event_model1(
             "rain_tm3": np.zeros(n1, dtype=cfg.dtype),
             "rain_sum_4": np.zeros(n1, dtype=cfg.dtype),
             "d_wl_t": d_wl1_t,
+
+            "nbr_wl_mean_t": nbr_wl1_t,
+            "nbr_wl_mean_tm1": nbr_wl1_tm1,
+            "conn2d_wl_t": conn2d_wl_t,
+            "conn2d_rain_sum_4": conn2d_rsum4,
         })
         df1 = df1.merge(s1, left_on="node_id", right_on="node_idx", how="left")
         df1.drop(columns=["node_idx"], inplace=True)
@@ -186,6 +219,9 @@ def rollout_event_two_models(
     nodes_2d_dyn: pd.DataFrame,  # timestep,node_idx,rainfall,water_level (wl exists for 0..9; rainfall all)
     H: int,
     cfg: RolloutConfig,
+    adj_1d: UndirectedEdges,
+    adj_2d: UndirectedEdges,
+    conn1d_to_2d: np.ndarray,
     alpha_1d: float = 1.0,                 # 1.0 = no damping; <1.0 adds inertia toward wl1_t
     clip_1d: tuple[float, float] | None = None,  # e.g. (-5.0, 50.0); None = no clip
 ) -> Dict[Tuple[int, int], np.ndarray]:
@@ -249,6 +285,26 @@ def rollout_event_two_models(
         d_wl2_t = wl2_t - wl2_tm1
         d_wl1_t = wl1_t - wl1_tm1
 
+        # graph features
+        nbr_wl2_t = neighbor_mean(wl2_t.astype(np.float32, copy=False), adj_2d).astype(cfg.dtype, copy=False)
+        nbr_wl2_tm1 = neighbor_mean(wl2_tm1.astype(np.float32, copy=False), adj_2d).astype(cfg.dtype, copy=False)
+        nbr_rsum4 = neighbor_mean(rain_sum_4.astype(np.float32, copy=False), adj_2d).astype(cfg.dtype, copy=False)
+
+        nbr_wl1_t = neighbor_mean(wl1_t.astype(np.float32, copy=False), adj_1d).astype(cfg.dtype, copy=False)
+        nbr_wl1_tm1 = neighbor_mean(wl1_tm1.astype(np.float32, copy=False), adj_1d).astype(cfg.dtype, copy=False)
+
+        conn = conn1d_to_2d.astype(np.int32, copy=False)
+        conn_safe = conn.copy()
+        missing = conn_safe < 0
+        if missing.any():
+            conn_safe[missing] = 0
+
+        conn2d_wl_t = wl2_t[conn_safe].astype(cfg.dtype, copy=False)
+        conn2d_rsum4 = rain_sum_4[conn_safe].astype(cfg.dtype, copy=False)
+        if missing.any():
+            conn2d_wl_t[missing] = 0
+            conn2d_rsum4[missing] = 0
+
         # --- 2D batch ---
         df2 = pd.DataFrame({
             "model_id": np.full(n2, model_id, dtype=np.int16),
@@ -269,6 +325,10 @@ def rollout_event_two_models(
             "rain_tm3": rain_tm3,
             "rain_sum_4": rain_sum_4,
             "d_wl_t": d_wl2_t,
+
+            "nbr_wl_mean_t": nbr_wl2_t,
+            "nbr_wl_mean_tm1": nbr_wl2_tm1,
+            "nbr_rain_sum_4": nbr_rsum4,
         })
         df2 = df2.merge(s2, left_on="node_id", right_on="node_idx", how="left")
         df2.drop(columns=["node_idx"], inplace=True)
@@ -297,6 +357,11 @@ def rollout_event_two_models(
             "rain_tm3": np.zeros(n1, dtype=cfg.dtype),
             "rain_sum_4": np.zeros(n1, dtype=cfg.dtype),
             "d_wl_t": d_wl1_t,
+
+            "nbr_wl_mean_t": nbr_wl1_t,
+            "nbr_wl_mean_tm1": nbr_wl1_tm1,
+            "conn2d_wl_t": conn2d_wl_t,
+            "conn2d_rain_sum_4": conn2d_rsum4,
         })
         df1 = df1.merge(s1, left_on="node_id", right_on="node_idx", how="left")
         df1.drop(columns=["node_idx"], inplace=True)
