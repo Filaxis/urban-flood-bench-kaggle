@@ -14,11 +14,16 @@ from ufb.io.static import load_model_static
 from ufb.io.dynamics import load_event_dynamics
 from ufb.infer.rollout import RolloutConfig, rollout_event_model1, rollout_event_two_models
 
+import torch
+from ufb.infer.predictor_gnn import GNNPredictor
+from ufb.models.gnn_py import Model1Net
+
 
 def main() -> None:
-    project_root = Path(
-        r"C:\Users\filax\OneDrive\Desktop\Code-repository\Kaggle\Competitions\05_UrbanFloodBench - flood modelling\urbanfloodbench"
-    )
+    # project_root = Path(
+    #     r"C:\Users\filax\OneDrive\Desktop\Code-repository\Kaggle\Competitions\05_UrbanFloodBench - flood modelling\urbanfloodbench"
+    # )
+    project_root = Path("/kaggle/working/urbanfloodbench")
 
     models_root = project_root / "full_dataset" / "Models"
     kaggle_root = project_root / "kaggle_dataset" / "urban-flood-modelling"
@@ -30,17 +35,47 @@ def main() -> None:
     # --- Write plan (authoritative row order + horizons) ---
     wp = build_write_plan(sample_sub)
 
-    # --- Load Model_1 artifacts ---
-    m1_dir = project_root / "data_cache" / "model1_train_samples_parquet"
-    m1_model_path = m1_dir / "model1_xgb.json"
-    m1_feat_path = m1_dir / "feature_cols.csv"
+    # --- Load Model_1 artifacts XGB-version ---
+    # m1_dir = project_root / "data_cache" / "model1_train_samples_parquet"
+    # m1_model_path = m1_dir / "model1_xgb.json"
+    # m1_feat_path = m1_dir / "feature_cols.csv"
 
-    model1 = XGBRegressor()
-    model1.load_model(str(m1_model_path))
-    feature_cols_1 = pd.read_csv(m1_feat_path, header=None)[0].tolist()
+    # model1 = XGBRegressor()
+    # model1.load_model(str(m1_model_path))
+    # feature_cols_1 = pd.read_csv(m1_feat_path, header=None)[0].tolist()
 
+    # static1 = load_model_static(models_root, model_id=1, split="test")
+    # event_map1 = index_event_folders(models_root / "Model_1" / "test")
+
+    # --- Load Model_1 GNN artifacts ---
+    m1_dir = project_root / "data_cache" / "gnn_model1"
+    m1_ckpt_path = m1_dir / "model1_state_dict.pt"
+    m1_meta_path = m1_dir / "model1_meta.json"
+
+    feature_cols_1 = pd.read_json(m1_meta_path)["feature_cols"].tolist()
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Build same architecture used in training
+    model1_net = Model1Net(
+        in_dim_2d=len(feature_cols_1),
+        in_dim_1d=len(feature_cols_1),
+        hidden_dim=128,
+        gnn_layers=3,
+        dropout=0.0,
+    )
+
+    model1_net.load_state_dict(torch.load(m1_ckpt_path, map_location="cpu"))
+
+    # Wrap into predictor
     static1 = load_model_static(models_root, model_id=1, split="test")
-    event_map1 = index_event_folders(models_root / "Model_1" / "test")
+
+    model1 = GNNPredictor(
+        model=model1_net,
+        adj_2d=static1.adj_2d,
+        device=device,
+        predict_delta=True,
+    )
 
     # --- Load Model_2 artifacts (split 1D / 2D models) ---
     m2_dir = project_root / "data_cache" / "model2_train_samples_parquet"
