@@ -36,17 +36,29 @@ def main():
         "wl_t","wl_tm1","wl_tm2","wl_tm3","wl_tm4","wl_tm5",
         "rain_t","rain_tm1","rain_tm2","rain_tm3","rain_sum_4",
         "d_wl_t","nbr_wl_mean_t","nbr_wl_mean_tm1",
-        "position_x","position_y","depth","invert_elevation","surface_elevation",
-        "base_area","deg","area","roughness","min_elevation","elevation",
-        "aspect","curvature","flow_accumulation",
+        "conn2d_wl_t","conn2d_rain_sum_4",
+        "position_x","position_y",
+        "area","roughness","min_elevation","elevation",
+        "aspect","curvature","flow_accumulation","deg",
+        "nbr_rain_sum_4",
     ]
     feature_cols_1d = [
         "wl_t","wl_tm1","wl_tm2","wl_tm3","wl_tm4","wl_tm5",
         "rain_t","rain_tm1","rain_tm2","rain_tm3","rain_sum_4",
         "d_wl_t","nbr_wl_mean_t","nbr_wl_mean_tm1",
         "conn2d_wl_t","conn2d_rain_sum_4",
-        "position_x","position_y","depth","invert",
+        "position_x","position_y","depth","invert_elevation",
+        "surface_elevation","base_area","deg",
     ]
+
+    missing_1d = [c for c in feature_cols_1d if c not in df.columns]
+    missing_2d = [c for c in feature_cols_2d if c not in df.columns]
+
+    print("missing_1d:", missing_1d)
+    print("missing_2d:", missing_2d)
+
+    if missing_1d or missing_2d:
+        raise ValueError("Feature column mismatch with parquet schema")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
