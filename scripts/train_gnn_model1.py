@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from ufb.models.gnn import Model1Net
+from ufb.models.gnn_py import Model1Net
 from ufb.training.gnn_dataset import Model1SnapshotDataset
 
 
