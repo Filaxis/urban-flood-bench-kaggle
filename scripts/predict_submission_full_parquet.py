@@ -69,9 +69,10 @@ def main() -> None:
 
     # Wrap into predictor
     static1 = load_model_static(models_root, model_id=1, split="test")
+    event_map1 = index_event_folders(models_root / "Model_1" / "test")
 
     model1 = GNNPredictor(
-        model=model1_net,
+        predictor=model1_net,
         adj_2d=static1.adj_2d,
         device=device,
         predict_delta=True,

@@ -30,3 +30,27 @@
 - Tag: v3-6-lags-topo
 - Commit: 6f8bfca
 - Branch: main
+
+## v4-gnn-initial
+- Date: 2026-02-26
+- Public LB: not submitted
+- Notes: gnn minimal skeleton for model_1
+- Tag: v3-gnn-initial
+- Commit: a72e8d9
+- Branch: gnn
+
+## v4-gnn-hybrid-submission
+- Date: 2026-03-01
+- Public LB: 9.4137
+- Notes: gnn for model_1 and xgb for model_2
+- Tag: v4-gnn-hybrid-submission
+- Commit: 0ec3dae
+- Branch: gnn
+
+## v4-gnn-hybrid-submission-patched
+- Date: 2026-03-09
+- Public LB: 9.4137
+- Notes: gnn for model_1 and xgb for model_2
+- Tag: v4-gnn-hybrid-submission-patched
+- Commit: 0ec3dae
+- Branch: gnn

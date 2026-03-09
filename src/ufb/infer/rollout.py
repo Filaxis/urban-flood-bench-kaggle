@@ -157,6 +157,7 @@ def rollout_event_model1(
         df2 = df2.merge(s2, left_on="node_id", right_on="node_idx", how="left")
         df2.drop(columns=["node_idx"], inplace=True)
         df2 = ensure_cols(df2, feature_cols, fill=0.0)
+        df2[feature_cols] = df2[feature_cols].fillna(0.0)
         X2 = df2.reindex(columns=feature_cols).to_numpy(dtype=np.float32, copy=False)
 
         # --- 1D batch ---
@@ -186,16 +187,25 @@ def rollout_event_model1(
             "conn2d_rain_sum_4": conn2d_rsum4,
         })
         df1 = df1.merge(s1, left_on="node_id", right_on="node_idx", how="left")
+        df1.drop(columns=["node_idx"], inplace=True)
         df1 = ensure_cols(df1, feature_cols, fill=0.0)
+        df1[feature_cols] = df1[feature_cols].fillna(0.0)
         X1 = df1.reindex(columns=feature_cols).to_numpy(dtype=np.float32, copy=False)
 
         # Predict next WL
-        # If predictor is GNNPredictor, use its predict_both() for a single forward pass.
         if hasattr(predictor, "predict_both"):
             y2, y1 = predictor.predict_both(X2, wl2_t, X1, wl1_t)  # type: ignore[attr-defined]
         else:
             y2 = predictor.predict_2d(X2, wl2_t).astype(cfg.dtype, copy=False)
             y1 = predictor.predict_1d(X1, wl1_t).astype(cfg.dtype, copy=False)
+
+        # Guardrails ONLY for Model_1 rollout
+        y2 = np.where(np.isnan(y2), wl2_t.astype(np.float32, copy=False), y2)
+        y2 = np.nan_to_num(y2, nan=0.0, posinf=1e6, neginf=-1e6)
+        y2 = np.clip(y2, -1000.0, 1000.0)
+        y1 = np.where(np.isnan(y1), wl1_t.astype(np.float32, copy=False), y1)
+        y1 = np.nan_to_num(y1, nan=0.0, posinf=1e6, neginf=-1e6)        
+        y1 = np.clip(y1, -1000.0, 1000.0)
 
         pred2[k, :] = y2
         pred1[k, :] = y1
@@ -210,7 +220,6 @@ def rollout_event_model1(
     for nid in range(n2):
         out[(2, nid)] = pred2[:, nid]
     return out
-
 
 # NOTE: you can keep your existing rollout_event_two_models as-is for XGB.
 # If you want it also switchable, wrap model_1d/model_2d into XGBTwoModelPredictor
