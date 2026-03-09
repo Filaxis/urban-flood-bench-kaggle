@@ -46,8 +46,8 @@ class Model1SnapshotDataset(Dataset):
         target_col: str = "d_wl_tp1",  # preferred: delta(wl_{t+1}-wl_t)
         wl_t_col: str = "wl_t",
         wl_tp1_col: str = "wl_tp1",
-        node_type_1d_value: str = "1d",
-        node_type_2d_value: str = "2d",
+        node_type_1d_value: int = 1,
+        node_type_2d_value: int = 2,
         feature_mean_1d=None,
         feature_std_1d=None,
         feature_mean_2d=None,
