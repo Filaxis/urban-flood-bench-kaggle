@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import json
+import pandas as pd
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -51,12 +53,58 @@ def main():
     node_ids_1d = static.nodes_1d["node_id"].to_numpy()
     node_ids_2d = static.nodes_2d["node_id"].to_numpy()
 
+    df = pd.read_parquet(parquet_path)
+
+    DEBUG_MAX_EVENTS = 3
+    
+    if DEBUG_MAX_EVENTS is not None:
+        if "event_id" not in df.columns:
+            raise ValueError("event_id column required for DEBUG_MAX_EVENTS subsetting")
+        keep_events = sorted(df["event_id"].dropna().unique())[:DEBUG_MAX_EVENTS]
+        df = df[df["event_id"].isin(keep_events)].copy()
+
+    tmp_path = "/kaggle/working/tmp_debug_subset.parquet"
+    df.to_parquet(tmp_path)
+
+    feature_mean_1d = df[feature_cols_1d].mean().to_numpy(np.float32)
+    feature_std_1d = df[feature_cols_1d].std().to_numpy(np.float32)
+    feature_mean_2d = df[feature_cols_2d].mean().to_numpy(np.float32)
+    feature_std_2d = df[feature_cols_2d].std().to_numpy(np.float32)
+
+    feature_mean_1d = np.nan_to_num(feature_mean_1d, nan=0.0, posinf=0.0, neginf=0.0)
+    feature_mean_2d = np.nan_to_num(feature_mean_2d, nan=0.0, posinf=0.0, neginf=0.0)
+    feature_std_1d = np.nan_to_num(feature_std_1d, nan=1.0, posinf=1.0, neginf=1.0)
+    feature_std_2d = np.nan_to_num(feature_std_2d, nan=1.0, posinf=1.0, neginf=1.0)
+
+    feature_std_1d = np.where(feature_std_1d < 1e-6, 1.0, feature_std_1d)
+    feature_std_2d = np.where(feature_std_2d < 1e-6, 1.0, feature_std_2d)
+
+    if "d_wl_tp1" not in df.columns:
+        if "wl_t" in df.columns and "wl_tp1" in df.columns:
+            df["d_wl_tp1"] = df["wl_tp1"] - df["wl_t"]
+        else:
+            raise ValueError("d_wl_tp1 missing and cannot be computed from wl_t / wl_tp1")
+
+    target_mean = float(df["d_wl_tp1"].mean())
+    target_std = float(df["d_wl_tp1"].std())
+
+    if not np.isfinite(target_mean):
+        target_mean = 0.0
+    if not np.isfinite(target_std) or target_std < 1e-6:
+        target_std = 1.0
+
     dataset = Model1SnapshotDataset(
-        parquet_path=parquet_path,
+        parquet_path=tmp_path,
         node_ids_1d=node_ids_1d,
         node_ids_2d=node_ids_2d,
         feature_cols_1d=feature_cols_1d,
         feature_cols_2d=feature_cols_2d,
+        feature_mean_1d=feature_mean_1d,
+        feature_std_1d=feature_std_1d,
+        feature_mean_2d=feature_mean_2d,
+        feature_std_2d=feature_std_2d,
+        target_mean=target_mean,
+        target_std=target_std,
         group_event_col="event_id",   # adjust if needed
         group_time_col="t",
         node_id_col="node_id",
@@ -66,7 +114,7 @@ def main():
 
     loader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
 
-    edge_index_2d = build_edge_index_from_adj(static.adj_2d)
+    edge_index_2d = build_edge_index_from_adj(static.adj_2d).to(device)
 
     model = Model1Net(
         in_dim_2d=len(feature_cols_2d),
@@ -93,7 +141,7 @@ def main():
             x1 = batch.x1d.squeeze(0).to(device)
             y1 = batch.y1d.squeeze(0).to(device)
 
-            d2, d1 = model(x2, edge_index_2d.to(device), x1)
+            d2, d1 = model(x2, edge_index_2d, x1)
 
             loss = rmse(d2, y2) + rmse(d1, y1)
 
@@ -114,6 +162,12 @@ def main():
     meta = dict(
         feature_cols_1d=feature_cols_1d,
         feature_cols_2d=feature_cols_2d,
+        feature_mean_1d=feature_mean_1d.tolist(),
+        feature_std_1d=feature_std_1d.tolist(),
+        feature_mean_2d=feature_mean_2d.tolist(),
+        feature_std_2d=feature_std_2d.tolist(),
+        target_mean=float(target_mean),
+        target_std=float(target_std),
     )
     with open(os.path.join(out_dir, "model1_meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)

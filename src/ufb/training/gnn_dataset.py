@@ -48,6 +48,12 @@ class Model1SnapshotDataset(Dataset):
         wl_tp1_col: str = "wl_tp1",
         node_type_1d_value: str = "1d",
         node_type_2d_value: str = "2d",
+        feature_mean_1d=None,
+        feature_std_1d=None,
+        feature_mean_2d=None,
+        feature_std_2d=None,
+        target_mean=0.0,
+        target_std=1.0,
     ):
         self.df = pd.read_parquet(parquet_path)
 
@@ -62,6 +68,21 @@ class Model1SnapshotDataset(Dataset):
         self.group_time_col = group_time_col
         self.node_id_col = node_id_col
         self.node_type_col = node_type_col
+        self.feature_mean_1d = feature_mean_1d
+        self.feature_std_1d = feature_std_1d
+        self.feature_mean_2d = feature_mean_2d
+        self.feature_std_2d = feature_std_2d
+        self.target_mean = target_mean
+        self.target_std = target_std
+
+        if self.feature_std_1d is not None:
+            self.feature_std_1d = np.where(self.feature_std_1d < 1e-6, 1.0, self.feature_std_1d)
+
+        if self.feature_std_2d is not None:
+            self.feature_std_2d = np.where(self.feature_std_2d < 1e-6, 1.0, self.feature_std_2d)
+
+        if self.target_std < 1e-6:
+            self.target_std = 1.0
 
         self.feature_cols_1d = list(feature_cols_1d)
         self.feature_cols_2d = list(feature_cols_2d)
@@ -108,10 +129,15 @@ class Model1SnapshotDataset(Dataset):
     def __getitem__(self, idx: int) -> Snapshot:
         ev, t = self.keys[idx]
 
-        a1 = self.df1[(self.df1[self.group_event_col] == ev) & (self.df1[self.group_time_col] == t)]
-        a2 = self.df2[(self.df2[self.group_event_col] == ev) & (self.df2[self.group_time_col] == t)]
+        a1 = self.df1[
+            (self.df1[self.group_event_col] == ev) &
+            (self.df1[self.group_time_col] == t)
+        ]
+        a2 = self.df2[
+            (self.df2[self.group_event_col] == ev) &
+            (self.df2[self.group_time_col] == t)
+        ]
 
-        # Allocate fixed-size arrays aligned to node ordering
         x1 = np.zeros((len(self.node_ids_1d), len(self.feature_cols_1d)), dtype=np.float32)
         y1 = np.zeros((len(self.node_ids_1d),), dtype=np.float32)
 
@@ -124,8 +150,23 @@ class Model1SnapshotDataset(Dataset):
             i = self.idx1.get(nid, None)
             if i is None:
                 continue
-            x1[i, :] = r[self.feature_cols_1d].to_numpy(dtype=np.float32)
-            y1[i] = float(r[self.target_col])
+
+            x = r[self.feature_cols_1d].to_numpy(dtype=np.float32)
+
+            if self.feature_mean_1d is not None:
+                x = np.where(np.isfinite(x), x, self.feature_mean_1d)
+            else:
+                x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+
+            if self.feature_mean_1d is not None and self.feature_std_1d is not None:
+                x = (x - self.feature_mean_1d) / self.feature_std_1d
+
+            x1[i, :] = x
+
+            y = float(r[self.target_col])
+            if self.target_mean is not None and self.target_std is not None:
+                y = (y - self.target_mean) / self.target_std
+            y1[i] = y
 
         # Fill 2D
         for _, r in a2.iterrows():
@@ -133,8 +174,23 @@ class Model1SnapshotDataset(Dataset):
             i = self.idx2.get(nid, None)
             if i is None:
                 continue
-            x2[i, :] = r[self.feature_cols_2d].to_numpy(dtype=np.float32)
-            y2[i] = float(r[self.target_col])
+
+            x = r[self.feature_cols_2d].to_numpy(dtype=np.float32)
+
+            if self.feature_mean_2d is not None:
+                x = np.where(np.isfinite(x), x, self.feature_mean_2d)
+            else:
+                x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+
+            if self.feature_mean_2d is not None and self.feature_std_2d is not None:
+                x = (x - self.feature_mean_2d) / self.feature_std_2d
+
+            x2[i, :] = x
+
+            y = float(r[self.target_col])
+            if self.target_mean is not None and self.target_std is not None:
+                y = (y - self.target_mean) / self.target_std
+            y2[i] = y
 
         return Snapshot(
             x2d=torch.from_numpy(x2),
