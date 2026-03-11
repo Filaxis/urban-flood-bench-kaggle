@@ -52,5 +52,13 @@
 - Public LB: 9.4137
 - Notes: gnn for model_1 and xgb for model_2
 - Tag: v4-gnn-hybrid-submission-patched
-- Commit: 0ec3dae
+- Commit: -------
+- Branch: gnn
+
+## v5-gnn-hybrid-submission-claude-patch
+- Date: 2026-03-09
+- Public LB: 8.5389
+- Notes: gnn for model_1 and xgb for model_2
+- Tag: v5-gnn-hybrid-submission-claude-patch
+- Commit: -------
 - Branch: gnn
