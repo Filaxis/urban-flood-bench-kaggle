@@ -35,7 +35,7 @@ def main() -> None:
     # ------------------------------------------------------------------ #
     # Model_1  —  GNN
     # ------------------------------------------------------------------ #
-    m1_dir       = project_root / "data_cache" / "gnn_model1"
+    m1_dir       = project_root / "data_cache" / "gnn_model1_rollout"
     m1_ckpt_path = m1_dir / "model1_state_dict.pt"
     m1_meta_path = m1_dir / "model1_meta.json"
 
