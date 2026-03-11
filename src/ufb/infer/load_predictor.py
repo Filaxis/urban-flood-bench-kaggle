@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import os
 import json
+import os
 from typing import Any
 
+import numpy as np
 import torch
 from xgboost import XGBRegressor
 
@@ -14,23 +15,19 @@ from ufb.infer.predictor_xgb import XGBSinglePredictor, XGBTwoModelPredictor
 
 
 def load_backend_config() -> BackendConfig:
-    backend = os.getenv("UFB_BACKEND", "xgb").lower().strip()
+    backend  = os.getenv("UFB_BACKEND", "xgb").lower().strip()
     alpha_1d = float(os.getenv("UFB_ALPHA_1D", "1.0"))
-    clip_raw = os.getenv("UFB_CLIP_1D", "").strip()  # e.g. "-5,50"
-    clip_1d = None
+    clip_raw = os.getenv("UFB_CLIP_1D", "").strip()
+    clip_1d  = None
     if clip_raw:
         a, b = clip_raw.split(",")
         clip_1d = (float(a), float(b))
-
     device = os.getenv("UFB_DEVICE", "cuda")
-    predict_delta = os.getenv("UFB_GNN_PREDICT_DELTA", "1") in ("1", "true", "True")
-
     return BackendConfig(
         backend=backend,
         alpha_1d=alpha_1d,
         clip_1d=clip_1d,
         device=device,
-        predict_delta=predict_delta,
     )
 
 
@@ -51,9 +48,11 @@ def load_predictor_model1(
     torch_model_ctor: Any | None = None,
 ):
     """
-    Returns:
-      - XGBSinglePredictor or GNNPredictor
-    For GNN you must provide torch_model_ctor that builds the torch model instance.
+    Returns a Predictor instance for Model_1.
+
+    For GNN: torch_model_ctor(meta) must return a Model1Net instance.
+    The meta JSON (saved by train_gnn_model1.py) now includes all normalisation
+    stats, which are forwarded to GNNPredictor automatically.
     """
     if cfg.backend == "xgb":
         if not xgb_model_path:
@@ -63,23 +62,28 @@ def load_predictor_model1(
 
     if cfg.backend == "gnn":
         if not (gnn_ckpt_path and gnn_meta_path and torch_model_ctor):
-            raise ValueError("gnn_ckpt_path, gnn_meta_path, and torch_model_ctor are required for backend=gnn")
+            raise ValueError(
+                "gnn_ckpt_path, gnn_meta_path, and torch_model_ctor are all required for backend=gnn"
+            )
 
         with open(gnn_meta_path, "r", encoding="utf-8") as f:
             meta = json.load(f)
 
-        # ctor must accept meta or infer dims
         torch_model = torch_model_ctor(meta)
-
         sd = torch.load(gnn_ckpt_path, map_location="cpu")
         torch_model.load_state_dict(sd)
 
         return GNNPredictor(
             model=torch_model,
             adj_2d=adj_2d,
+            feature_mean_2d=np.array(meta["feature_mean_2d"], dtype=np.float32),
+            feature_std_2d=np.array(meta["feature_std_2d"],  dtype=np.float32),
+            feature_mean_1d=np.array(meta["feature_mean_1d"], dtype=np.float32),
+            feature_std_1d=np.array(meta["feature_std_1d"],  dtype=np.float32),
+            target_mean=float(meta["target_mean"]),
+            target_std=float(meta["target_std"]),
             device=cfg.device,
             dtype=dtype,
-            predict_delta=cfg.predict_delta,
         )
 
     raise ValueError(f"Unknown backend: {cfg.backend}")
