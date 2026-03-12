@@ -91,7 +91,6 @@ def main() -> None:
     feature_cols_2_2d = pd.read_csv(m2_feat_2d_path, header=None)[0].tolist()
 
     # --- DIAGNOSTIC: remove after confirming ---
-    import numpy as np
     test_2d = np.zeros((1, len(feature_cols_2_2d)), dtype=np.float32)
     test_1d = np.zeros((1, len(feature_cols_2_1d)), dtype=np.float32)
     print(f"[DIAG] model2_2d n_features_in: {model2_2d.n_features_in_}")
