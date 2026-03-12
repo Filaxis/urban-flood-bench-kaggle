@@ -130,6 +130,13 @@ def main():
     df_train_2d = df_train[df_train["node_type"] == 2].copy()
     df_val_2d   = df_val[df_val["node_type"] == 2].copy()
 
+    # --- DIAGNOSTIC ---
+    print(f"[DIAG] 1D target mean: {df_train_1d['target'].mean():.4f}  (expect ~40-47)")
+    print(f"[DIAG] 2D target mean: {df_train_2d['target'].mean():.4f}  (expect ~40-47)")
+    print(f"[DIAG] 1D target min/max: {df_train_1d['target'].min():.4f} / {df_train_1d['target'].max():.4f}")
+    print(f"[DIAG] 2D target min/max: {df_train_2d['target'].min():.4f} / {df_train_2d['target'].max():.4f}")
+    # --- END DIAGNOSTIC ---
+
     print(f"\nTraining 1D model  ({len(FEATURE_COLS_1D)} features)...")
     train_one(df_train_1d, df_val_1d, parquet_dir, tag="1d", feature_cols=FEATURE_COLS_1D)
 
