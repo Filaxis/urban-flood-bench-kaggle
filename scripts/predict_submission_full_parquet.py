@@ -201,7 +201,13 @@ def main() -> None:
                         alpha_1d=1.0,
                         clip_1d=None,
                     )
+
                     print(f"[OK] Rolled out Model_2 event {eid}  H={H}")
+                    # quick sanity stats
+                    a1 = np.concatenate([current_cache[(1, i)] for i in range(len(static2.nodes_1d))])
+                    a2 = np.concatenate([current_cache[(2, j)] for j in range(len(static2.nodes_2d))])
+                    print(f"[M2 E{eid}] 1D wl: min={a1.min():.3f} mean={a1.mean():.3f} max={a1.max():.3f}")
+                    print(f"[M2 E{eid}] 2D wl: min={a2.min():.3f} mean={a2.mean():.3f} max={a2.max():.3f}  H={H}")
 
                 else:
                     raise ValueError(f"Unexpected model_id: {mid}")
