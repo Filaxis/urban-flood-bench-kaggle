@@ -62,3 +62,11 @@
 - Tag: v5-gnn-hybrid-submission-claude-patch
 - Commit: -------
 - Branch: gnn
+
+## v6-gnn-full-submission-baseline
+- Date: 2026-03-13
+- Public LB: 0.5608
+- Notes: gnn for model_1 and model_2
+- Tag: v6-gnn-full-submission-baseline
+- Commit: -------
+- Branch: gnn
