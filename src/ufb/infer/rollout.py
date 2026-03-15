@@ -249,6 +249,8 @@ def rollout_event_model1(
         df_e = _ensure_cols(df_e, feature_cols_edge)
         df_e[feature_cols_edge] = df_e[feature_cols_edge].fillna(0.0)
         Xe = df_e.reindex(columns=feature_cols_edge).to_numpy(dtype=np.float32, copy=False)
+        # Duplicate for both directed edges (undirected graph: a→b and b→a)
+        Xe = np.concatenate([Xe, Xe], axis=0)
 
         # ---- Predict ----
         y2, y1, inlet_next, eflow_next = predictor.predict_all(X2, wl2_t, X1, wl1_t, Xe)
@@ -260,6 +262,8 @@ def rollout_event_model1(
         y1 = np.clip(y1, -1000.0, 1000.0)
         inlet_next = np.nan_to_num(inlet_next, nan=0.0)
         eflow_next = np.nan_to_num(eflow_next, nan=0.0)
+        # Slice to original n_edges before storing in lag state
+        eflow_next = eflow_next[:n_edges]
 
         pred2[k, :] = y2
         pred1[k, :] = y1

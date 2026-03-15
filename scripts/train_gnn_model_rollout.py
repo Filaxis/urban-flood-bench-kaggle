@@ -427,7 +427,8 @@ class EventSequence:
         Xe[:, IDX_STAT_E] = self.stat_e_norm
         Xe = (Xe - self.fmean_e) / self.fstd_e
         np.nan_to_num(Xe, copy=False)
-        return Xe
+        # Duplicate for both directions (undirected graph: a→b and b→a)
+        return np.concatenate([Xe, Xe], axis=0)
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +501,10 @@ def rollout_loss_one_event(
         gt2  = torch.as_tensor(seq.gt_wl2[ti],   dtype=torch.float32, device=device)
         gt1  = torch.as_tensor(seq.gt_wl1[ti],   dtype=torch.float32, device=device)
         gti  = torch.as_tensor(seq.gt_infl[ti],  dtype=torch.float32, device=device)
-        gte  = torch.as_tensor(seq.gt_eflow[ti], dtype=torch.float32, device=device)
+        gte  = torch.as_tensor(
+            np.concatenate([seq.gt_eflow[ti], seq.gt_eflow[ti]]),
+            dtype=torch.float32, device=device
+        )
 
         loss2 = torch.sqrt(F.mse_loss(wl2_next, gt2) + 1e-8)
         loss1 = torch.sqrt(F.mse_loss(wl1_next, gt1) + 1e-8)
@@ -512,7 +516,8 @@ def rollout_loss_one_event(
         wl2_new   = wl2_next.detach().cpu().numpy()
         wl1_new   = wl1_next.detach().cpu().numpy()
         infl_new  = inlet_next.detach().cpu().numpy()
-        eflow_new = edge_next.detach().cpu().numpy()
+        # Slice to original n_edges (first half = forward direction)
+        eflow_new = edge_next.detach().cpu().numpy()[:seq.n_edges]
 
         wl2_tm5, wl2_tm4, wl2_tm3, wl2_tm2, wl2_tm1, wl2_t = \
             wl2_tm4, wl2_tm3, wl2_tm2, wl2_tm1, wl2_t, wl2_new
