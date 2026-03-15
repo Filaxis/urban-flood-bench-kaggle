@@ -8,6 +8,7 @@ import pandas as pd
 
 from ufb.features.graph_feats import UndirectedEdges, neighbor_mean
 
+
 @dataclass(frozen=True)
 class SampleConfig:
     warmup_steps: int = 10
@@ -19,19 +20,33 @@ class SampleConfig:
     dtype: str = "float32"
 
 
-def _dense_reshape(df: pd.DataFrame, value_cols: List[str], n_nodes: int) -> Tuple[np.ndarray, np.ndarray]:
-    df = df.sort_values(["timestep", "node_idx"], kind="stable")
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _dense_reshape(
+    df: pd.DataFrame,
+    value_cols: List[str],
+    n_nodes: int,
+    idx_col: str = "node_idx",
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert long-format df into a dense (T, n_nodes, len(value_cols)) array.
+    Works for both node tables (idx_col="node_idx") and edge tables (idx_col="edge_idx").
+    """
+    df = df.sort_values(["timestep", idx_col], kind="stable")
     ts = df["timestep"].to_numpy()
     unique_ts = np.unique(ts)
     T = unique_ts.size
 
     expected_rows = T * n_nodes
     if len(df) != expected_rows:
-        raise ValueError(f"Dynamics not dense: got {len(df)} rows, expected {expected_rows} (=T*n_nodes). "
-                         f"T={T}, n_nodes={n_nodes}")
+        raise ValueError(
+            f"Dynamics not dense: got {len(df)} rows, expected {expected_rows} "
+            f"(T={T}, n={n_nodes})."
+        )
 
-    vals = df[value_cols].to_numpy()
-    vals = vals.reshape(T, n_nodes, len(value_cols))
+    vals = df[value_cols].to_numpy().reshape(T, n_nodes, len(value_cols))
     return unique_ts, vals
 
 
@@ -50,7 +65,7 @@ def _select_timesteps_for_training(rain_2d: np.ndarray, cfg: SampleConfig) -> np
     rng = np.random.default_rng(cfg.seed)
     T = rain_2d.shape[0]
 
-    t_min = max(cfg.min_t, cfg.n_lags - 1)  # n_lags=6 => max(9, 5) = 9
+    t_min = max(cfg.min_t, cfg.n_lags - 1)
     t_max = T - 2  # need t+1 for target
     if t_max < t_min:
         return np.array([], dtype=int)
@@ -79,17 +94,16 @@ def _compute_rainfall_context(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Three scalar-per-timestep rainfall context features, evaluated at t_sel.
-
     Returns three (S,) arrays:
       rain_frac_remaining   -- fraction of total event rain still to fall after t
       rain_steps_since_peak -- steps since rainfall peak (0 at or before peak)
       rain_intensity_trend  -- mean(last 5 steps) - mean(prior 5 steps)
     """
     T = rain2.shape[0]
-    rain_ts = rain2.max(axis=1).astype(np.float64)  # (T,)
+    rain_ts = rain2.max(axis=1).astype(np.float64)
 
     total = rain_ts.sum()
-    cum   = np.cumsum(rain_ts)
+    cum = np.cumsum(rain_ts)
     frac_remaining = np.clip(1.0 - cum / total, 0.0, 1.0) if total > 0 else np.zeros(T)
 
     peak_t = int(np.argmax(rain_ts))
@@ -106,6 +120,10 @@ def _compute_rainfall_context(
     )
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 def build_event_training_samples(
     *,
     model_id: int,
@@ -117,11 +135,26 @@ def build_event_training_samples(
     adj_1d: Optional[UndirectedEdges] = None,
     adj_2d: Optional[UndirectedEdges] = None,
     conn1d_to_2d: Optional[np.ndarray] = None,
-) -> pd.DataFrame:
+    # --- new arguments for flow features ---
+    edges_1d_static: Optional[pd.DataFrame] = None,   # from static.edges_1d
+    edges_1d_dyn: Optional[pd.DataFrame] = None,      # from EventDynamics.edges_1d_dyn
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Returns one training DataFrame for ONE event, containing both 1D and 2D rows.
+    Build training samples for one event.
 
-    NOTE: target column is wl_{t+1} - wl_t  (TRUE DELTA).
+    Returns
+    -------
+    df_nodes : pd.DataFrame
+        Combined 1D + 2D node rows. Columns include inlet_flow lags for 1D nodes.
+        Target columns: "target" (WL delta), "target_inlet_flow" (inlet_flow at t+1).
+    df_edges : pd.DataFrame
+        1D edge rows (one per edge per selected timestep).
+        Target column: "target_edge_flow" (edge flow at t+1).
+        Empty DataFrame if edges_1d_dyn is None.
+
+    NOTE: Both targets are TRUE values (not deltas) — the model predicts the
+    absolute next-step flow values, which are then used as lag features.
+    For WL the target remains a TRUE DELTA (wl_{t+1} - wl_t).
     """
     n1 = len(nodes_1d_static)
     n2 = len(nodes_2d_static)
@@ -131,14 +164,36 @@ def build_event_training_samples(
     if set(nodes_2d_static["node_idx"]) != set(range(n2)):
         raise ValueError("2D node_idx are not 0..N-1.")
 
-    _, v1 = _dense_reshape(nodes_1d_dyn, ["water_level"], n1)              # (T, n1, 1)
+    # ---- Load dynamics ----
+    # Check whether inlet_flow was loaded
+    has_inlet = "inlet_flow" in nodes_1d_dyn.columns
+
+    node_cols_1d = ["water_level", "inlet_flow"] if has_inlet else ["water_level"]
+    _, v1 = _dense_reshape(nodes_1d_dyn, node_cols_1d, n1)          # (T, n1, 1or2)
     _, v2 = _dense_reshape(nodes_2d_dyn, ["rainfall", "water_level"], n2)  # (T, n2, 2)
 
-    wl1   = v1[:, :, 0].astype(cfg.dtype, copy=False)  # (T, n1)
-    rain2 = v2[:, :, 0].astype(cfg.dtype, copy=False)  # (T, n2)
-    wl2   = v2[:, :, 1].astype(cfg.dtype, copy=False)  # (T, n2)
+    wl1   = v1[:, :, 0].astype(cfg.dtype, copy=False)   # (T, n1)
+    infl1 = v1[:, :, 1].astype(cfg.dtype, copy=False) if has_inlet else None  # (T, n1) or None
+    rain2 = v2[:, :, 0].astype(cfg.dtype, copy=False)   # (T, n2)
+    wl2   = v2[:, :, 1].astype(cfg.dtype, copy=False)   # (T, n2)
 
     T = wl2.shape[0]
+
+    # Edge flow
+    has_edges = (
+        edges_1d_dyn is not None
+        and edges_1d_static is not None
+        and "flow" in edges_1d_dyn.columns
+    )
+    if has_edges:
+        n_edges = len(edges_1d_static)
+        _, ve = _dense_reshape(edges_1d_dyn, ["flow"], n_edges, idx_col="edge_idx")
+        eflow = ve[:, :, 0].astype(cfg.dtype, copy=False)  # (T, n_edges)
+    else:
+        n_edges = 0
+        eflow = None
+
+    # ---- Precompute helpers ----
     rain_sum_4_all = np.zeros((T, n2), dtype=cfg.dtype)
     rain_sum_4_all[3:, :] = (
         rain2[3:, :] + rain2[2:-1, :] + rain2[1:-2, :] + rain2[:-3, :]
@@ -146,9 +201,10 @@ def build_event_training_samples(
 
     t_sel = _select_timesteps_for_training(rain2, cfg)
     if t_sel.size == 0:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
-    # rainfall context — (S,) scalars, same value for every node at each timestep
+    S = t_sel.size
+
     frac_remaining, steps_since_peak, rain_trend = _compute_rainfall_context(
         rain2, t_sel, cfg.dtype
     )
@@ -178,9 +234,9 @@ def build_event_training_samples(
             conn2d_wl_t[:, missing]  = 0
             conn2d_rsum4[:, missing] = 0
 
-    S = t_sel.size
-
-    # ---- 2D samples ----
+    # ================================================================
+    # 2D node samples  (unchanged except rainfall context cols)
+    # ================================================================
     X2 = {
         "model_id":  np.full((S * n2,), model_id, dtype=np.int16),
         "node_type": np.full((S * n2,), 2, dtype=np.int8),
@@ -214,18 +270,20 @@ def build_event_training_samples(
         X2["nbr_wl_mean_tm1"] = np.zeros((S * n2,), dtype=cfg.dtype)
         X2["nbr_rain_sum_4"]  = np.zeros((S * n2,), dtype=cfg.dtype)
 
-    # rainfall context broadcast to all n2 nodes at each timestep
     X2["rain_frac_remaining"]   = np.repeat(frac_remaining,   n2)
     X2["rain_steps_since_peak"] = np.repeat(steps_since_peak, n2)
     X2["rain_intensity_trend"]  = np.repeat(rain_trend,       n2)
 
+    # 2D target: WL delta only (no flow target for 2D nodes)
     X2["target"] = (wl2[t_sel + 1, :] - wl2[t_sel, :]).reshape(-1)
 
     df2 = pd.DataFrame(X2)
     df2 = df2.merge(nodes_2d_static, left_on="node_id", right_on="node_idx", how="left")
     df2.drop(columns=["node_idx"], inplace=True)
 
-    # ---- 1D samples ----
+    # ================================================================
+    # 1D node samples  (adds inlet_flow lags + target_inlet_flow)
+    # ================================================================
     X1 = {
         "model_id":  np.full((S * n1,), model_id, dtype=np.int16),
         "node_type": np.full((S * n1,), 1, dtype=np.int8),
@@ -261,16 +319,59 @@ def build_event_training_samples(
         X1["conn2d_wl_t"]       = np.zeros((S * n1,), dtype=cfg.dtype)
         X1["conn2d_rain_sum_4"] = np.zeros((S * n1,), dtype=cfg.dtype)
 
-    # rainfall context broadcast to all n1 nodes at each timestep
     X1["rain_frac_remaining"]   = np.repeat(frac_remaining,   n1)
     X1["rain_steps_since_peak"] = np.repeat(steps_since_peak, n1)
     X1["rain_intensity_trend"]  = np.repeat(rain_trend,       n1)
 
+    # inlet_flow lags (3 lags — enough to capture recent drainage state)
+    if infl1 is not None:
+        X1["inlet_flow_t"]   = infl1[t_sel, :].reshape(-1)
+        X1["inlet_flow_tm1"] = infl1[t_sel - 1, :].reshape(-1)
+        X1["inlet_flow_tm2"] = infl1[t_sel - 2, :].reshape(-1)
+        # target: absolute inlet_flow at t+1 (model predicts next-step value)
+        X1["target_inlet_flow"] = infl1[t_sel + 1, :].reshape(-1)
+    else:
+        X1["inlet_flow_t"]      = np.zeros((S * n1,), dtype=cfg.dtype)
+        X1["inlet_flow_tm1"]    = np.zeros((S * n1,), dtype=cfg.dtype)
+        X1["inlet_flow_tm2"]    = np.zeros((S * n1,), dtype=cfg.dtype)
+        X1["target_inlet_flow"] = np.zeros((S * n1,), dtype=cfg.dtype)
+
+    # WL delta target
     X1["target"] = (wl1[t_sel + 1, :] - wl1[t_sel, :]).reshape(-1)
 
     df1 = pd.DataFrame(X1)
     df1 = df1.merge(nodes_1d_static, left_on="node_id", right_on="node_idx", how="left")
     df1.drop(columns=["node_idx"], inplace=True)
 
-    df = pd.concat([df1, df2], axis=0, ignore_index=True, copy=False)
-    return df
+    df_nodes = pd.concat([df1, df2], axis=0, ignore_index=True, copy=False)
+
+    # ================================================================
+    # 1D edge samples  (separate parquet)
+    # ================================================================
+    if not has_edges:
+        return df_nodes, pd.DataFrame()
+
+    # edge_idx must be 0..n_edges-1
+    edge_ids = edges_1d_static["edge_idx"].to_numpy(dtype=np.int32)
+
+    Xe = {
+        "model_id":  np.full((S * n_edges,), model_id, dtype=np.int16),
+        "edge_id":   np.tile(edge_ids, S),
+        "t":         np.repeat(t_sel.astype(np.int32), n_edges),
+
+        # edge flow lags
+        "flow_t":   eflow[t_sel, :].reshape(-1),
+        "flow_tm1": eflow[t_sel - 1, :].reshape(-1),
+        "flow_tm2": eflow[t_sel - 2, :].reshape(-1),
+
+        # target: absolute flow at t+1
+        "target_edge_flow": eflow[t_sel + 1, :].reshape(-1),
+    }
+
+    df_e = pd.DataFrame(Xe)
+
+    # Join static edge features
+    df_e = df_e.merge(edges_1d_static, left_on="edge_id", right_on="edge_idx", how="left")
+    df_e.drop(columns=["edge_idx"], inplace=True)
+
+    return df_nodes, df_e

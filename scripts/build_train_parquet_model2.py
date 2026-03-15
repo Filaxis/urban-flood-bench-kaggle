@@ -11,28 +11,31 @@ from ufb.training.samples import SampleConfig, build_event_training_samples
 
 
 def main() -> None:
-    # --- USER PATHS (edit if needed) ---
+    # --- USER PATHS ---
     project_root = Path(
         r"C:\Users\filax\OneDrive\Desktop\Code-repository\Kaggle\Competitions\05_UrbanFloodBench - flood modelling\urbanfloodbench"
     )
     models_root = project_root / "full_dataset" / "Models"
 
-    # Output location
+    # Node parquets
     out_dir = project_root / "data_cache" / "model2_train_samples_parquet"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Edge parquets
+    out_dir_edges = project_root / "data_cache" / "model2_train_edges_parquet"
+    out_dir_edges.mkdir(parents=True, exist_ok=True)
 
     # --- CONFIG ---
     model_id = 2
     split = "train"
     warmup_steps = 10
 
-    # Model_2 has larger node counts; keep caps conservative at first.
     cfg = SampleConfig(
         warmup_steps=warmup_steps,
         n_lags=6,
         min_t=9,
         dry_keep_prob=0.15,
-        max_timesteps_per_event=140,  # slightly lower than Model_1 to control size
+        max_timesteps_per_event=140,
         seed=42,
         dtype="float32",
     )
@@ -40,27 +43,29 @@ def main() -> None:
     print(f"[INFO] Loading static data for Model_{model_id} ({split})...")
     static = load_model_static(models_root, model_id, split=split)
 
-    # Index train event folders
     split_root = models_root / f"Model_{model_id}" / split
     event_map = index_event_folders(split_root)
 
     print(f"[INFO] Found {len(event_map)} train events for Model_{model_id}.")
-    print(f"[INFO] Writing per-event parquet samples to: {out_dir}")
+    print(f"[INFO] Node parquets  -> {out_dir}")
+    print(f"[INFO] Edge parquets  -> {out_dir_edges}")
 
     index_rows = []
 
     for eid, event_dir in sorted(event_map.items()):
         print(f"\n[EVENT] Model_{model_id} train event {eid} @ {event_dir.name}")
 
-        dyn = load_event_dynamics(event_dir=event_dir, model_id=model_id, event_id=eid, split=split)
+        dyn = load_event_dynamics(
+            event_dir=event_dir, model_id=model_id, event_id=eid, split=split
+        )
 
         T = len(dyn.timesteps)
         H = T - warmup_steps
         if H <= 0:
-            print(f"[WARN] Event {eid}: T={T} too short for warmup={warmup_steps}; skipping.")
+            print(f"[WARN] Event {eid}: T={T} too short; skipping.")
             continue
 
-        df = build_event_training_samples(
+        df_nodes, df_edges = build_event_training_samples(
             model_id=model_id,
             nodes_1d_static=static.nodes_1d,
             nodes_2d_static=static.nodes_2d,
@@ -70,36 +75,51 @@ def main() -> None:
             adj_1d=static.adj_1d,
             adj_2d=static.adj_2d,
             conn1d_to_2d=static.conn1d_to_2d,
+            edges_1d_static=static.edges_1d,
+            edges_1d_dyn=dyn.edges_1d_dyn,
         )
 
-        if df.empty:
-            print(f"[WARN] Event {eid}: produced 0 samples; skipping parquet write.")
+        if df_nodes.empty:
+            print(f"[WARN] Event {eid}: produced 0 node samples; skipping.")
             continue
 
-        out_path = out_dir / f"model{model_id}_train_event{eid:03d}.parquet"
-        df.to_parquet(out_path, index=False)
+        # Write node parquet
+        node_path = out_dir / f"model{model_id}_train_event{eid:03d}.parquet"
+        df_nodes.to_parquet(node_path, index=False)
 
-        print(f"[OK] Event {eid}: T={T}, H={H}, rows={len(df):,} -> {out_path.name}")
+        # Write edge parquet
+        edge_path = out_dir_edges / f"model{model_id}_train_event{eid:03d}_edges.parquet"
+        if not df_edges.empty:
+            df_edges.to_parquet(edge_path, index=False)
+            edge_rows = len(df_edges)
+        else:
+            edge_rows = 0
+            print(f"[WARN] Event {eid}: no edge samples (edge dynamics missing?).")
 
-        index_rows.append(
-            {
-                "model_id": model_id,
-                "split": split,
-                "event_id": eid,
-                "T": T,
-                "H": H,
-                "rows": int(len(df)),
-                "parquet_path": str(out_path),
-            }
+        print(
+            f"[OK] Event {eid}: T={T} H={H} "
+            f"node_rows={len(df_nodes):,} edge_rows={edge_rows:,}"
         )
 
-        del df
+        index_rows.append({
+            "model_id":   model_id,
+            "split":      split,
+            "event_id":   eid,
+            "T":          T,
+            "H":          H,
+            "node_rows":  int(len(df_nodes)),
+            "edge_rows":  int(edge_rows),
+            "node_path":  str(node_path),
+            "edge_path":  str(edge_path) if edge_rows > 0 else "",
+        })
 
-    index_df = pd.DataFrame(index_rows).sort_values(["event_id"])
+        del df_nodes, df_edges
+
+    index_df = pd.DataFrame(index_rows).sort_values("event_id")
     index_csv = out_dir / "index.csv"
     index_df.to_csv(index_csv, index=False)
     print(f"\n[INFO] Wrote index: {index_csv}")
-    print(index_df[["event_id", "T", "H", "rows"]].to_string(index=False))
+    print(index_df[["event_id", "T", "H", "node_rows", "edge_rows"]].to_string(index=False))
 
 
 if __name__ == "__main__":
