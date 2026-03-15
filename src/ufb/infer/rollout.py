@@ -105,6 +105,17 @@ def rollout_event_model1(
     # ---- Precompute rainfall context for all T steps ----
     rain_frac, rain_peak, rain_trend = _precompute_rainfall_context(rain2, cfg.dtype)
 
+    # ---- Precompute Manning's max pipe flow per edge (physical upper bound) ----
+    # Q_max = (1/n) * A * R^(2/3) * sqrt(S)  for full circular pipe
+    # All pipes confirmed circular (shape=0) in both models
+    _d = se["diameter"].to_numpy(dtype=np.float32) if "diameter" in se.columns else np.ones(n_edges, np.float32)
+    _n = se["roughness"].to_numpy(dtype=np.float32) if "roughness" in se.columns else np.full(n_edges, 0.02, np.float32)
+    _S = se["slope"].to_numpy(dtype=np.float32)    if "slope"    in se.columns else np.full(n_edges, 0.01, np.float32)
+    _A = np.pi * _d**2 / 4
+    _R = _d / 4
+    q_max = (1.0 / np.maximum(_n, 1e-6)) * _A * _R**(2/3) * np.sqrt(np.maximum(_S, 1e-8))
+    q_max = q_max.astype(cfg.dtype)
+
     # ---- Precompute normalised static features ----
     s2 = nodes_2d_static.sort_values("node_idx").reset_index(drop=True)
     s1 = nodes_1d_static.sort_values("node_idx").reset_index(drop=True)
@@ -264,6 +275,8 @@ def rollout_event_model1(
         eflow_next = np.nan_to_num(eflow_next, nan=0.0)
         # Slice to original n_edges before storing in lag state
         eflow_next = eflow_next[:n_edges]
+        # Clip to Manning's physical maximum (both directions)
+        eflow_next = np.clip(eflow_next, -q_max, q_max)
 
         pred2[k, :] = y2
         pred1[k, :] = y1
